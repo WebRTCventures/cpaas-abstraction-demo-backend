@@ -2,6 +2,42 @@
 const AWS = require("aws-sdk");
 const { v4: uuid } = require("uuid");
 const OpenTok = require("opentok");
+const Twilio = require("twilio");
+
+async function twilio(uniqueName) {
+  // initialize twilio instance
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const apiKey = process.env.TWILIO_API_KEY;
+  const apiSecret = process.env.TWILIO_API_SECRET;
+
+  const client = Twilio(accountSid, authToken);
+  const AccessToken = Twilio.jwt.AccessToken;
+  const VideoGrant = AccessToken.VideoGrant;
+
+  const foundRooms = await client.video.v1.rooms.list({
+    uniqueName,
+  });
+
+  const foundRoom = foundRooms[0];
+
+  const createdRoom =
+    !foundRoom && (await client.video.v1.rooms.create({ uniqueName }));
+
+  const room = foundRoom ? foundRoom : createdRoom;
+
+  const identity = uuid();
+
+  const videoGrant = new VideoGrant({ room: uniqueName });
+
+  const token = new AccessToken(accountSid, apiKey, apiSecret, { identity });
+
+  token.addGrant(videoGrant);
+
+  return {
+    token: token.toJwt(),
+  };
+}
 
 async function amazonChimeSdk(room) {
   // initialize Chime instance
@@ -47,23 +83,40 @@ async function amazonChimeSdk(room) {
   };
 }
 
-async function opentok() {
-  return new Promise((resolve, reject) => {
-    const opentok = new OpenTok(
-      process.env.OPENTOK_API_KEY,
-      process.env.OPENTOK_API_SECRET
-    );
+const opentokSessions = [];
+async function opentok(room) {
+  const opentok = new OpenTok(
+    process.env.OPENTOK_API_KEY,
+    process.env.OPENTOK_API_SECRET
+  );
 
-    opentok.createSession((err, session) => {
-      token = session.generateToken();
+  const foundSession = opentokSessions.find((it) => it.room === room);
+  console.log('DEBUG foundSession', foundSession);
 
-      resolve({
-        apiKey: process.env.OPENTOK_API_KEY,
-        sessionId: session.sessionId,
-        token,
-      });
-    });
-  });
+  const createdSession =
+    !foundSession &&
+    (await new Promise((resolve, reject) =>
+      opentok.createSession((err, session) => {
+        if (err) reject(err);
+
+        resolve(session);
+      })
+    ));
+  if (createdSession) {
+    opentokSessions.push({ room, session: createdSession });
+  }
+  console.log('DEBUG opentokSessions', opentokSessions)
+
+  const session = foundSession ? foundSession.session : createdSession;
+  console.log('DEBUG session', session);
+
+  const token = session.generateToken();
+
+  return {
+    apiKey: process.env.OPENTOK_API_KEY,
+    sessionId: session.sessionId,
+    token,
+  };
 }
 
 module.exports = async function (fastify, opts) {
@@ -71,12 +124,16 @@ module.exports = async function (fastify, opts) {
     "/cpaas-integration/meeting-session",
     async function (request, reply) {
       let response = {};
+      const room = request.query.room
       switch (request.query.cpaas) {
+        case "twilio":
+          response = await twilio(room);
+          break;
         case "chimesdk":
-          response = await amazonChimeSdk(request.query.room);
+          response = await amazonChimeSdk(room);
           break;
         case "opentok":
-          response = await opentok();
+          response = await opentok(room);
           break;
       }
 
