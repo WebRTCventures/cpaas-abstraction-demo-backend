@@ -91,7 +91,6 @@ async function opentok(room) {
   );
 
   const foundSession = opentokSessions.find((it) => it.room === room);
-  console.log('DEBUG foundSession', foundSession);
 
   const createdSession =
     !foundSession &&
@@ -105,10 +104,8 @@ async function opentok(room) {
   if (createdSession) {
     opentokSessions.push({ room, session: createdSession });
   }
-  console.log('DEBUG opentokSessions', opentokSessions)
 
   const session = foundSession ? foundSession.session : createdSession;
-  console.log('DEBUG session', session);
 
   const token = session.generateToken();
 
